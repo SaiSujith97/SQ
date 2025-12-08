@@ -1,49 +1,36 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
-    View, 
-    Text, 
-    TextInput, 
-    TouchableOpacity, 
-    StyleSheet, 
-    ActivityIndicator, 
-    ScrollView,
-    Alert 
+  View, 
+  Text, 
+  TextInput, 
+  TouchableOpacity, 
+  StyleSheet, 
+  ActivityIndicator, 
+  ScrollView 
 } from 'react-native';
 import axios from 'axios';
 import { Picker } from '@react-native-picker/picker'; 
 import debounce from 'lodash.debounce'; 
 
 // CRUCIAL: REPLACE with your computer's actual local IP address
-// If this still fails, try 'http://10.0.2.2:3000/api/triage' for Android Emulator
-const AI_API_ENDPOINT = "http://192.168.230.40:3000/api/triage"; 
-const MIN_SYMPTOM_LENGTH = 8; 
+const AI_API_ENDPOINT = 'http://YOUR_LOCAL_IP_ADDRESS:3000/api/triage'; 
+const MIN_SYMPTOM_LENGTH = 15; // Minimum length to trigger analysis
 const DEBOUNCE_DELAY_MS = 800; 
-
-// Setting a 10 second timeout for the API call
-const AXIOS_CONFIG = {
-    timeout: 10000 // 10 seconds
-};
 
 const TriageForm = () => {
     // Input States
     const [name, setName] = useState('');
     const [age, setAge] = useState('');
-    const [gender, setGender] = useState('Male'); 
+    const [gender, setGender] = useState('Male'); // Simplified
     const [symptoms, setSymptoms] = useState('');
     
     // AI/Output States
     const [recommendedDepartment, setRecommendedDepartment] = useState('General Medicine');
     const [isLoading, setIsLoading] = useState(false);
 
-    // List of departments used for Picker mapping
     const allDepartments = [
-        { label: 'General Medicine', value: "General Medicine" },
-        { label: 'Cardiology', value: "Cardiology" },
-        { label: 'Orthopedics', value: "Orthopedics" },
-        { label: 'Gastroenterology', value: "Gastroenterology" }, 
-        { label: 'Neurology', value: "Neurology" },
-        { label: 'Emergency', value: "Emergency" },
-        { label: 'Pediatrics', value: "Pediatrics" }
+        'General Medicine', 'Cardiology', 'Orthopedics', 'Gastroenterology', 
+        'Neurology', 'Emergency', 'Pediatrics'
     ];
 
     // --- Core Analysis Function (Non-Debounced) ---
@@ -56,38 +43,17 @@ const TriageForm = () => {
         setIsLoading(true);
 
         try {
+            // Sends the symptom text to your local server proxy
             const response = await axios.post(AI_API_ENDPOINT, {
                 symptom_text: symptomText
-            }, AXIOS_CONFIG); // <-- Use the timeout config here
+            });
             
-            // --- CRUCIAL CLIENT DEBUG LOG ---
-            console.log("CLIENT DEBUG: AI Response Data:", response.data);
-            // -------------------------------
-
-            // Check if the expected key exists and is valid
             const resultDepartment = response.data.department_recommendation;
-
-            if (typeof resultDepartment === 'string' && resultDepartment.length > 0) {
-                 setRecommendedDepartment(resultDepartment);
-            } else {
-                 console.error("CLIENT DEBUG: Invalid response structure from server. Check server console for 500 error details.");
-                 setRecommendedDepartment('General Medicine');
-                 Alert.alert("Analysis Failed", "The server returned an empty or invalid department name.");
-            }
+            setRecommendedDepartment(resultDepartment);
 
         } catch (error) {
-            // This catches network errors or 500 status codes from the server
-            console.error("CLIENT DEBUG: Axios or Server Error:", error.message || error);
-            
-            let errorMessage = "Server not responding (Network Error).";
-            
-            if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-                 errorMessage = "Request Timed Out (10s). AI call is taking too long or server is blocked.";
-            } else if (error.response && error.response.status === 500) {
-                 errorMessage = "Internal Server Error (500). Check your Gemini API key in the server terminal.";
-            }
-            
-            Alert.alert("Triage Failed", errorMessage);
+            console.error("AI Analysis Error:", error);
+            // Fallback on error
             setRecommendedDepartment('General Medicine');
         } finally {
             setIsLoading(false);
@@ -95,18 +61,22 @@ const TriageForm = () => {
     };
     
     // --- Debounced Function ---
+    // Use useMemo to create a stable debounced function instance
     const debouncedAnalyze = useMemo(
+        // Calls the core function after 800ms of no typing
         () => debounce(fetchDepartmentRecommendation, DEBOUNCE_DELAY_MS),
         [] 
     );
 
     // --- Change Handler ---
     const handleSymptomChange = (newText) => {
+        // 1. Update the UI state immediately
         setSymptoms(newText);
+        // 2. Call the debounced function, which handles the timing
         debouncedAnalyze(newText); 
     };
 
-    // Cleanup: Cancel pending calls
+    // Cleanup: Cancel any pending debounced calls when the component unmounts
     useEffect(() => {
         return () => {
             debouncedAnalyze.cancel();
@@ -128,15 +98,16 @@ const TriageForm = () => {
                 <Text style={styles.label}>Gender</Text>
                 <TextInput style={styles.textInput} placeholder="Male/Female/Other" value={gender} onChangeText={setGender} />
 
-                {/* --- SYMPTOMS TEXTAREA --- */}
+                {/* --- SYMPTOMS TEXTAREA & AUTO-ANALYSIS --- */}
                 <Text style={styles.label}>Symptoms</Text>
                 <TextInput
                     style={styles.textAreaInput}
                     multiline
                     numberOfLines={4}
                     value={symptoms}
+                    // This triggers the debounced analysis
                     onChangeText={handleSymptomChange} 
-                    placeholder="Enter Your Symptoms"
+                    placeholder="Enter Your Symptoms (e.g., severe chest pain, inability to move left arm)"
                     placeholderTextColor="#999"
                     textAlignVertical="top"
                 />
@@ -151,26 +122,15 @@ const TriageForm = () => {
                 {/* --- DEPARTMENT DROPDOWN (AI Output) --- */}
                 <Text style={styles.label}>Select the department</Text>
                 <View style={styles.pickerContainer}>
-                    {/* Diagnostic Text: If this doesn't change, the response failed! */}
-                    <Text style={styles.diagnosticText}>
-                        AI Suggestion: {recommendedDepartment}
-                    </Text>
-                    
                     <Picker
-                        // FIX: Key forces the component to re-mount/refresh
-                        key={recommendedDepartment} 
-                        
                         selectedValue={recommendedDepartment}
+                        // Manual override is allowed if the AI suggests wrong
                         onValueChange={(itemValue) => setRecommendedDepartment(itemValue)} 
                         style={styles.picker}
-                        enabled={!isLoading} 
+                        enabled={!isLoading} // Disable manual change during analysis
                     >
                         {allDepartments.map((dept) => (
-                            <Picker.Item 
-                                key={dept.value} 
-                                label={dept.label} 
-                                value={dept.value} 
-                            />
+                            <Picker.Item key={dept} label={dept} value={dept} />
                         ))}
                     </Picker>
                 </View>
@@ -199,15 +159,7 @@ const styles = StyleSheet.create({
     loadingText: { marginLeft: 10, color: '#007AFF' },
     pickerContainer: { 
         borderColor: '#ccc', borderWidth: 1, borderRadius: 5, overflow: 'hidden', 
-        backgroundColor: '#f9f9f9', justifyContent: 'center',
-        height: 100, // Adjusted height to accommodate text
-    },
-    diagnosticText: {
-        fontSize: 14, 
-        fontWeight: 'bold', 
-        color: '#D32F2F', // Red for visibility
-        paddingHorizontal: 10,
-        paddingTop: 5,
+        backgroundColor: '#f9f9f9', height: 50, justifyContent: 'center',
     },
     picker: { height: 50, width: '100%' },
     scheduleButton: { 
